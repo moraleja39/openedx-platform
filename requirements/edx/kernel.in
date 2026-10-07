@@ -45,6 +45,7 @@ django-model-utils
 django-mptt
 django-mysql
 django-oauth-toolkit                # Provides oAuth2 capabilities for Django
+django-otp                          # Two-factor authentication framework and OTP plugins (totp, static) for staff 2FA
 django-pipeline
 django-ratelimit
 django-sekizai
@@ -138,6 +139,7 @@ pyuca                               # For more accurate sorting of translated co
 pysrt                               # Support for SubRip subtitle files, used in the video XModule
 pytz                                # Time zone information database
 PyYAML                              # Used to parse XModule resource templates
+qrcode                              # QR code generation for TOTP device setup
 redis                               # celery task broker
 requests-oauthlib                   # Simplifies use of OAuth via the requests library, used for CCX and LTI
 random2

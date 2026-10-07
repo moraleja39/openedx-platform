@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import urllib
+from urllib.parse import quote_plus
 
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
@@ -22,6 +23,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.csrf import csrf_exempt, csrf_protect, ensure_csrf_cookie
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods
+from django_otp import user_has_device
 from django_ratelimit.decorators import ratelimit
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
@@ -52,6 +54,7 @@ from openedx.core.djangoapps.user_authn.exceptions import AuthFailedError, Vulne
 from openedx.core.djangoapps.user_authn.tasks import check_pwned_password_and_send_track_event
 from openedx.core.djangoapps.user_authn.toggles import (
     is_require_third_party_auth_enabled,
+    is_staff_2fa_enabled,
     should_redirect_to_authn_microfrontend,
 )
 from openedx.core.djangoapps.user_authn.views.login_form import get_login_session_form
@@ -634,8 +637,6 @@ def login_user(request, api_version="v1"):  # pylint: disable=too-many-statement
         ):
             raise VulnerablePasswordError(accounts.AUTHN_LOGIN_BLOCK_HIBP_POLICY_MSG, "require-password-change")
 
-        _handle_successful_authentication_and_login(possibly_authenticated_user, request)
-
         # The AJAX method calling should know the default destination upon success
         redirect_url, finish_auth_url = None, ""
 
@@ -650,6 +651,33 @@ def login_user(request, api_version="v1"):  # pylint: disable=too-many-statement
             redirect_url = get_redirect_url_with_host(
                 root_url, enterprise_selection_page(request, possibly_authenticated_user, finish_auth_url or next_url)
             )
+        else:
+            redirect_url = get_next_url_for_login_page(request)
+
+        # Intercept staff user for Two-Factor Authentication (2FA)
+        if possibly_authenticated_user.is_staff and is_staff_2fa_enabled():
+            request.session["pre_auth_staff_user_id"] = possibly_authenticated_user.id
+            if redirect_url:
+                request.session["pre_auth_staff_next_url"] = redirect_url
+
+            has_device = user_has_device(possibly_authenticated_user)
+            target_2fa_url = reverse("two_factor_verify") if has_device else reverse("two_factor_setup")
+            if redirect_url:
+                target_2fa_url = f"{target_2fa_url}?next={quote_plus(redirect_url)}"
+            root_url = configuration_helpers.get_value('LMS_ROOT_URL', settings.LMS_ROOT_URL)
+            target_2fa_url = get_redirect_url_with_host(root_url, target_2fa_url)
+
+            response = JsonResponse({
+                "success": True,
+                "redirect_url": target_2fa_url,
+            })
+            set_custom_attribute("login_user_auth_failed_error", False)
+            set_custom_attribute("login_user_response_status", response.status_code)
+            set_custom_attribute("login_user_redirect_url", target_2fa_url)
+            mark_user_change_as_expected(user.id)
+            return response
+
+        _handle_successful_authentication_and_login(possibly_authenticated_user, request)
 
         if (
             settings.ENABLE_AUTHN_LOGIN_NUDGE_HIBP_POLICY

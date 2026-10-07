@@ -1,0 +1,66 @@
+<%page expression_filter="h"/>
+<%!
+    from django.utils.translation import gettext as _
+    from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+%>
+<%namespace name='static' file='/static_content.html'/>
+<%inherit file="../main.html" />
+
+<%block name="pagetitle">${_("Staff Two-Factor Authentication")}</%block>
+
+<div class="section-bkg-wrapper">
+    <main id="main" aria-label="Content" tabindex="-1">
+        <div id="content-container" class="login-register-content" style="max-width: 500px; margin: 40px auto; padding: 30px; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <div class="two-factor-verify-container">
+                <h2 style="margin-top: 0; margin-bottom: 15px; font-size: 24px; color: #1c1d1f;">${_("Two-Factor Authentication")}</h2>
+                <p style="margin-bottom: 20px; color: #6a6f73; font-size: 14px;">
+                    ${_("Please enter the 6-digit verification code from your authenticator app (or a backup token) to continue.")}
+                </p>
+
+                % if error:
+                <div class="status message submission-error" style="background-color: #fde8e8; border-left: 4px solid #e02424; padding: 12px; margin-bottom: 20px; color: #9b1c1c; font-size: 14px;" role="alert">
+                    <p class="message-title" style="margin: 0; font-weight: 600;">${error}</p>
+                </div>
+                % endif
+
+                <form method="POST" action="${post_url}" id="two-factor-verify-form">
+                    <input type="hidden" name="csrfmiddlewaretoken" value="${csrf_token}"/>
+                    % if next_url:
+                    <input type="hidden" name="next" value="${next_url}"/>
+                    % endif
+
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="otp_token" style="display: block; font-weight: 600; margin-bottom: 8px; color: #1c1d1f; font-size: 14px;">
+                            ${_("Authentication Code")}
+                        </label>
+                        <input
+                            type="text"
+                            name="otp_token"
+                            id="otp_token"
+                            class="form-control"
+                            style="width: 100%; padding: 10px 12px; font-size: 18px; letter-spacing: 2px; text-align: center; border: 1px solid #c4c4c4; border-radius: 4px;"
+                            placeholder="123456"
+                            autocomplete="one-time-code"
+                            inputmode="numeric"
+                            maxlength="16"
+                            autofocus
+                            required
+                        />
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 12px; font-size: 16px; font-weight: 600; background-color: #0075b4; border-color: #0075b4; color: #fff; border-radius: 4px; cursor: pointer;">
+                        ${_("Verify and Log In")}
+                    </button>
+                </form>
+
+                % if can_setup:
+                <div style="margin-top: 25px; text-align: center; border-top: 1px solid #e0e0e0; padding-top: 15px;">
+                    <a href="${setup_url}" style="color: #0075b4; text-decoration: underline; font-size: 14px;">
+                        ${_("Set up or reconfigure authenticator app")}
+                    </a>
+                </div>
+                % endif
+            </div>
+        </div>
+    </main>
+</div>

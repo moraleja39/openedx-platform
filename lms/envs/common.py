@@ -138,6 +138,24 @@ ENABLE_UNICODE_USERNAME = False
 ENABLE_DJANGO_ADMIN_SITE = True
 ENABLE_LMS_MIGRATION = False
 
+# .. toggle_name: settings.ENABLE_STAFF_2FA
+# .. toggle_implementation: DjangoSetting
+# .. toggle_default: False
+# .. toggle_description: Enforce Two-Factor Authentication (TOTP 2FA) exclusively for staff users.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-07
+ENABLE_STAFF_2FA = False
+
+# .. toggle_name: settings.ENFORCE_STAFF_2FA_SETUP
+# .. toggle_implementation: DjangoSetting
+# .. toggle_default: False
+# .. toggle_description: Enforce 2FA device setup for staff users without registered devices.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-07
+ENFORCE_STAFF_2FA_SETUP = False
+
+OTP_TOTP_ISSUER = 'Open edX'
+
 # .. toggle_name: settings.ENABLE_MASQUERADE
 # .. toggle_implementation: DjangoSetting
 # .. toggle_default: True
@@ -1212,6 +1230,7 @@ MIDDLEWARE = [
     # Instead of AuthenticationMiddleware, we use a cached backed version
     #'django.contrib.auth.middleware.AuthenticationMiddleware',
     'openedx.core.djangoapps.cache_toolbox.middleware.CacheBackedAuthenticationMiddleware',
+    'django_otp.middleware.OTPMiddleware',
 
     # Middleware to flush user's session in other browsers when their email is changed.
     'openedx.core.djangoapps.safe_sessions.middleware.EmailChangeMiddleware',
@@ -1774,6 +1793,10 @@ INSTALLED_APPS = [
     'django.contrib.redirects',
     'django.contrib.sessions',
     'django.contrib.sites',
+
+    'django_otp',
+    'django_otp.plugins.otp_totp',
+    'django_otp.plugins.otp_static',
 
     'dal',
     'dal_select2',

@@ -91,6 +91,24 @@ ENABLE_ORGANIZATION_STAFF_ACCESS_FOR_CONTENT_LIBRARIES = True
 # Turn off account locking if failed login attempts exceeds a limit
 ENABLE_MAX_FAILED_LOGIN_ATTEMPTS = False
 
+# .. toggle_name: settings.ENABLE_STAFF_2FA
+# .. toggle_implementation: DjangoSetting
+# .. toggle_default: False
+# .. toggle_description: Enforce Two-Factor Authentication (TOTP 2FA) exclusively for staff users.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-07
+ENABLE_STAFF_2FA = False
+
+# .. toggle_name: settings.ENFORCE_STAFF_2FA_SETUP
+# .. toggle_implementation: DjangoSetting
+# .. toggle_default: False
+# .. toggle_description: Enforce 2FA device setup for staff users without registered devices.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-07
+ENFORCE_STAFF_2FA_SETUP = False
+
+OTP_TOTP_ISSUER = 'Open edX'
+
 # .. toggle_name: settings.EDITABLE_SHORT_DESCRIPTION
 # .. toggle_implementation: DjangoSetting
 # .. toggle_default: True
@@ -373,6 +391,7 @@ MIDDLEWARE = [
 
     # Instead of AuthenticationMiddleware, we use a cache-backed version
     'openedx.core.djangoapps.cache_toolbox.middleware.CacheBackedAuthenticationMiddleware',
+    'django_otp.middleware.OTPMiddleware',
 
     'common.djangoapps.student.middleware.UserStandingMiddleware',
 
@@ -650,6 +669,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.sites',
     'django.contrib.messages',
+
+    'django_otp',
+    'django_otp.plugins.otp_totp',
+    'django_otp.plugins.otp_static',
 
     # Tweaked version of django.contrib.staticfiles
     'openedx.core.djangoapps.staticfiles.apps.EdxPlatformStaticFilesConfig',

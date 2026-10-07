@@ -31,3 +31,23 @@ ENABLE_LOGIN_USING_THIRDPARTY_AUTH_ONLY = WaffleSwitch(
 ENABLE_PWNED_PASSWORD_API = WaffleSwitch(
     f'{_WAFFLE_NAMESPACE}.enable_pwned_password_api', __name__
 )
+
+# .. toggle_name: user_authn.enable_staff_2fa
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: When enabled, staff users (is_staff=True) will be required to use Two-Factor Authentication (TOTP 2FA) to log in.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-07
+ENABLE_STAFF_2FA = WaffleSwitch(
+    f'{_WAFFLE_NAMESPACE}.enable_staff_2fa', __name__
+)
+
+# .. toggle_name: user_authn.enforce_staff_2fa_setup
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: When enabled, staff users without a registered 2FA device are forced to set one up during login.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-07
+ENFORCE_STAFF_2FA_SETUP = WaffleSwitch(
+    f'{_WAFFLE_NAMESPACE}.enforce_staff_2fa_setup', __name__
+)

@@ -14,6 +14,11 @@ class UserAuthnConfig(AppConfig):
     """
     name = 'openedx.core.djangoapps.user_authn'
 
+    def ready(self):
+        super().ready()
+        from .admin import patch_admin_site_with_otp
+        patch_admin_site_with_otp()
+
     plugin_app = {
         PluginURLs.CONFIG: {
             ProjectType.LMS: {

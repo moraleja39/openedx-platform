@@ -23,7 +23,9 @@ from openedx.core import toggles as core_toggles
 from openedx.core.apidocs import api_info
 from openedx.core.djangoapps.password_policy import compliance as password_policy_compliance
 from openedx.core.djangoapps.password_policy.forms import PasswordPolicyAwareAdminAuthForm
+from openedx.core.djangoapps.user_authn.admin import patch_admin_site_with_otp
 
+patch_admin_site_with_otp()
 django_autodiscover()
 admin.site.site_header = _('Studio Administration')
 admin.site.site_title = admin.site.site_header

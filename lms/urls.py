@@ -49,6 +49,7 @@ from openedx.core.djangoapps.password_policy.forms import PasswordPolicyAwareAdm
 from openedx.core.djangoapps.plugins.constants import ProjectType
 from openedx.core.djangoapps.programs.models import ProgramsApiConfig
 from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+from openedx.core.djangoapps.user_authn.admin import patch_admin_site_with_otp
 from openedx.core.djangoapps.user_authn.views.login import redirect_to_lms_login
 from openedx.features.enterprise_support.api import enterprise_enabled
 
@@ -59,6 +60,7 @@ RENDER_VIDEO_XBLOCK_EMBED_NAME = 'render_public_video_xblock_embed'
 COURSE_PROGRESS_NAME = 'progress'
 
 if settings.DEBUG or settings.FEATURES.get('ENABLE_DJANGO_ADMIN_SITE'):
+    patch_admin_site_with_otp()
     django_autodiscover()
     admin.site.site_header = _('LMS Administration')
     admin.site.site_title = admin.site.site_header

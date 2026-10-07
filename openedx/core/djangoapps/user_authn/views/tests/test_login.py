@@ -34,7 +34,8 @@ from openedx.core.djangoapps.password_policy.compliance import (
 from openedx.core.djangoapps.password_policy.hibp import PwnedPasswordsAPI
 from openedx.core.djangoapps.site_configuration.tests.mixins import SiteMixin
 from openedx.core.djangoapps.user_api.accounts import EMAIL_MAX_LENGTH, EMAIL_MIN_LENGTH
-from openedx.core.djangoapps.user_authn.config.waffle import ENABLE_PWNED_PASSWORD_API
+from openedx.core.djangoapps.user_authn.config.waffle import ENABLE_PWNED_PASSWORD_API, ENABLE_STAFF_2FA
+from django_otp.plugins.otp_totp.models import TOTPDevice
 from openedx.core.djangoapps.user_authn.cookies import jwt_cookies
 from openedx.core.djangoapps.user_authn.tests.utils import setup_login_oauth_client
 from openedx.core.djangoapps.user_authn.views.login import (
@@ -85,6 +86,63 @@ class LoginTest(OpenEdxEventsTestMixin, SiteMixin, CacheIsolationTestCase):
         user.set_password(self.password)
         user.save()
         return user
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_staff_login_with_2fa_enabled_with_device_redirects_to_verify(self):
+        """Staff user with registered TOTP device gets redirected to 2FA verify on login."""
+        self.user.is_staff = True
+        self.user.save()
+        TOTPDevice.objects.create(user=self.user, name="default", confirmed=True)
+
+        response, _ = self._login_response(self.user_email, self.password)
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertTrue(data.get("success"))
+        self.assertTrue(data.get("redirect_url").startswith(reverse("two_factor_verify")))
+        # User session is pre-auth, not fully logged in yet
+        self.assertEqual(self.client.session.get("pre_auth_staff_user_id"), self.user.id)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_staff_login_with_2fa_enabled_without_device_redirects_to_setup(self):
+        """Staff user without registered TOTP device gets redirected to 2FA setup on login."""
+        self.user.is_staff = True
+        self.user.save()
+
+        response, _ = self._login_response(self.user_email, self.password)
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertTrue(data.get("success"))
+        self.assertTrue(data.get("redirect_url").startswith(reverse("two_factor_setup")))
+        self.assertEqual(self.client.session.get("pre_auth_staff_user_id"), self.user.id)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=False)
+    @override_settings(ENABLE_STAFF_2FA=False)
+    def test_staff_login_with_2fa_disabled_logs_in_normally(self):
+        """When 2FA toggle is disabled, staff user logs in immediately in single step."""
+        self.user.is_staff = True
+        self.user.save()
+
+        response, _ = self._login_response(self.user_email, self.password)
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertTrue(data.get("success"))
+        self.assertNotIn("2fa", data.get("redirect_url") or "")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.id)
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_learner_login_with_2fa_enabled_logs_in_normally(self):
+        """When 2FA toggle is enabled, non-staff learner experiences no 2FA prompt/redirect."""
+        self.user.is_staff = False
+        self.user.save()
+
+        response, _ = self._login_response(self.user_email, self.password)
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertTrue(data.get("success"))
+        self.assertNotIn("2fa", data.get("redirect_url") or "")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.user.id)
 
     def test_login_success(self):
         response, mock_audit_log = self._login_response(

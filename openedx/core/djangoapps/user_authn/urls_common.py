@@ -15,7 +15,7 @@ from django.conf import settings
 from django.contrib.auth.views import PasswordResetCompleteView
 from django.urls import path, re_path
 
-from .views import auto_auth, login, logout, password_reset, register
+from .views import auto_auth, login, logout, password_reset, register, two_factor
 from .views.password_reset import PasswordResetConfirmWrapper
 
 urlpatterns = [
@@ -45,6 +45,10 @@ urlpatterns = [
          ),
 
     path('login_ajax', login.login_user, name="login_api"),
+
+    # Staff 2FA routes
+    path('login/2fa/', two_factor.TwoFactorVerifyView.as_view(), name='two_factor_verify'),
+    path('account/2fa/setup/', two_factor.TwoFactorSetupView.as_view(), name='two_factor_setup'),
 
     # Moved from user_api/legacy_urls.py
     re_path(

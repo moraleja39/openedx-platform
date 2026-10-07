@@ -1,0 +1,82 @@
+<%page expression_filter="h"/>
+<%!
+    from django.utils.translation import gettext as _
+    from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+%>
+<%namespace name='static' file='/static_content.html'/>
+<%inherit file="../main.html" />
+
+<%block name="pagetitle">${_("Staff Two-Factor Authentication Setup")}</%block>
+
+<div class="section-bkg-wrapper">
+    <main id="main" aria-label="Content" tabindex="-1">
+        <div id="content-container" class="login-register-content" style="max-width: 550px; margin: 100px auto 40px; padding: 30px; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <div class="two-factor-setup-container">
+                <h2 style="margin-top: 0; margin-bottom: 15px; font-size: 24px; color: #1c1d1f;">${_("Set Up Two-Factor Authentication")}</h2>
+                <p style="margin-bottom: 20px; color: #6a6f73; font-size: 14px;">
+                    ${_("Two-factor authentication is required for staff accounts. Follow the steps below to connect your authenticator app (such as Google Authenticator, 1Password, Microsoft Authenticator, or Authy).")}
+                </p>
+
+                % if error:
+                <div class="status message submission-error" style="background-color: #fde8e8; border-left: 4px solid #e02424; padding: 12px; margin-bottom: 20px; color: #9b1c1c; font-size: 14px;" role="alert">
+                    <p class="message-title" style="margin: 0; font-weight: 600;">${error}</p>
+                </div>
+                % endif
+
+                <div class="setup-steps" style="margin-bottom: 25px;">
+                    <h3 style="font-size: 16px; font-weight: 600; margin-bottom: 10px;">${_("Step 1: Scan QR Code")}</h3>
+                    <p style="font-size: 14px; color: #6a6f73; margin-bottom: 15px;">
+                        ${_("Scan this QR code with your authenticator app:")}
+                    </p>
+                    <div style="text-align: center; margin: 20px 0;">
+                        <img src="${qr_code_data_uri}" alt="${_('QR Code for Two-Factor Authentication')}" style="width: 200px; height: 200px; border: 1px solid #e0e0e0; padding: 8px; border-radius: 4px;" />
+                    </div>
+
+                    % if secret_key:
+                    <p style="font-size: 13px; color: #6a6f73; margin-bottom: 5px;">
+                        ${_("Cannot scan the QR code? Enter this secret key manually:")}
+                    </p>
+                    <div style="background: #f7f9fa; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 14px; word-break: break-all; text-align: center; margin-bottom: 20px; border: 1px solid #e0e0e0;">
+                        <strong>${secret_key}</strong>
+                    </div>
+                    % endif
+
+                    <h3 style="font-size: 16px; font-weight: 600; margin-top: 25px; margin-bottom: 10px;">${_("Step 2: Confirm Code")}</h3>
+                    <p style="font-size: 14px; color: #6a6f73; margin-bottom: 15px;">
+                        ${_("Enter the 6-digit code shown in your authenticator app to complete setup:")}
+                    </p>
+                </div>
+
+                <form method="POST" action="${post_url}" id="two-factor-setup-form">
+                    <input type="hidden" name="csrfmiddlewaretoken" value="${csrf_token}"/>
+                    % if next_url:
+                    <input type="hidden" name="next" value="${next_url}"/>
+                    % endif
+
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label for="otp_token" style="display: block; font-weight: 600; margin-bottom: 8px; color: #1c1d1f; font-size: 14px;">
+                            ${_("6-Digit Code")}
+                        </label>
+                        <input
+                            type="text"
+                            name="otp_token"
+                            id="otp_token"
+                            class="form-control"
+                            style="width: 100%; padding: 10px 12px; font-size: 18px; letter-spacing: 2px; text-align: center; border: 1px solid #c4c4c4; border-radius: 4px;"
+                            placeholder="123456"
+                            autocomplete="one-time-code"
+                            inputmode="numeric"
+                            maxlength="8"
+                            autofocus
+                            required
+                        />
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="width: 100%; padding: 12px; font-size: 16px; font-weight: 600; background-color: #0075b4; border-color: #0075b4; color: #fff; border-radius: 4px; cursor: pointer;">
+                        ${_("Complete Setup and Continue")}
+                    </button>
+                </form>
+            </div>
+        </div>
+    </main>
+</div>
