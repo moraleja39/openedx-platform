@@ -41,7 +41,23 @@
                     </div>
                     % endif
 
-                    <h3 style="font-size: 16px; font-weight: 600; margin-top: 25px; margin-bottom: 10px;">${_("Step 2: Confirm Code")}</h3>
+                    % if backup_tokens:
+                    <h3 style="font-size: 16px; font-weight: 600; margin-top: 25px; margin-bottom: 10px;">${_("Step 2: Save Backup Recovery Codes")}</h3>
+                    <p style="font-size: 14px; color: #6a6f73; margin-bottom: 12px;">
+                        ${_("Save these one-time backup codes in a safe place. If you ever lose access to your authenticator app, each code can be used once to log in.")}
+                    </p>
+                    <div style="background: #f7f9fa; border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px; margin-bottom: 20px;">
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; text-align: center; font-family: monospace; font-size: 14px; font-weight: 600; color: #1c1d1f;">
+                            % for code in backup_tokens:
+                            <div style="background: #fff; padding: 6px; border: 1px dashed #c4c4c4; border-radius: 3px;">
+                                ${code}
+                            </div>
+                            % endfor
+                        </div>
+                    </div>
+                    % endif
+
+                    <h3 style="font-size: 16px; font-weight: 600; margin-top: 25px; margin-bottom: 10px;">${_("Step 3: Confirm Code") if backup_tokens else _("Step 2: Confirm Code")}</h3>
                     <p style="font-size: 14px; color: #6a6f73; margin-bottom: 15px;">
                         ${_("Enter the 6-digit code shown in your authenticator app to complete setup:")}
                     </p>

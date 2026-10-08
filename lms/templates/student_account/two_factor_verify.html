@@ -10,7 +10,7 @@
 
 <div class="section-bkg-wrapper">
     <main id="main" aria-label="Content" tabindex="-1">
-        <div id="content-container" class="login-register-content" style="max-width: 500px; margin: 40px auto; padding: 30px; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <div id="content-container" class="login-register-content" style="max-width: 500px; margin: 100px auto 40px; padding: 30px; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
             <div class="two-factor-verify-container">
                 <h2 style="margin-top: 0; margin-bottom: 15px; font-size: 24px; color: #1c1d1f;">${_("Two-Factor Authentication")}</h2>
                 <p style="margin-bottom: 20px; color: #6a6f73; font-size: 14px;">
@@ -52,14 +52,6 @@
                         ${_("Verify and Log In")}
                     </button>
                 </form>
-
-                % if can_setup:
-                <div style="margin-top: 25px; text-align: center; border-top: 1px solid #e0e0e0; padding-top: 15px;">
-                    <a href="${setup_url}" style="color: #0075b4; text-decoration: underline; font-size: 14px;">
-                        ${_("Set up or reconfigure authenticator app")}
-                    </a>
-                </div>
-                % endif
             </div>
         </div>
     </main>

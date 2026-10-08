@@ -98,7 +98,7 @@ class LoginTest(OpenEdxEventsTestMixin, SiteMixin, CacheIsolationTestCase):
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.content)
         self.assertTrue(data.get("success"))
-        self.assertTrue(data.get("redirect_url").startswith(reverse("two_factor_verify")))
+        self.assertIn(reverse("two_factor_verify"), data.get("redirect_url"))
         # User session is pre-auth, not fully logged in yet
         self.assertEqual(self.client.session.get("pre_auth_staff_user_id"), self.user.id)
         self.assertTrue(self.client.session.get("pre_auth_staff_backend"))
@@ -114,7 +114,7 @@ class LoginTest(OpenEdxEventsTestMixin, SiteMixin, CacheIsolationTestCase):
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.content)
         self.assertTrue(data.get("success"))
-        self.assertTrue(data.get("redirect_url").startswith(reverse("two_factor_setup")))
+        self.assertIn(reverse("two_factor_setup"), data.get("redirect_url"))
         self.assertEqual(self.client.session.get("pre_auth_staff_user_id"), self.user.id)
         self.assertTrue(self.client.session.get("pre_auth_staff_backend"))
         self.assertNotIn("_auth_user_id", self.client.session)

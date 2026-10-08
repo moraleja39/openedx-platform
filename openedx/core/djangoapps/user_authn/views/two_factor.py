@@ -17,6 +17,7 @@ from django.urls import reverse
 from django.utils.translation import gettext as _
 from django.views.generic import View
 from django_otp import login as otp_login, match_token, user_has_device
+from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
 from django_otp.plugins.otp_totp.models import TOTPDevice
 
 from common.djangoapps.edxmako.shortcuts import render_to_response
@@ -103,8 +104,6 @@ class TwoFactorVerifyView(View):
             "post_url": request.path,
             "next_url": next_url,
             "error": None,
-            "can_setup": True,
-            "setup_url": f"{reverse('two_factor_setup')}?next={quote_plus(next_url)}",
         }
         return render_to_response("student_account/two_factor_verify.html", context)
 
@@ -131,8 +130,6 @@ class TwoFactorVerifyView(View):
                     "post_url": request.path,
                     "next_url": next_url,
                     "error": error_msg,
-                    "can_setup": False,
-                    "setup_url": reverse("two_factor_setup"),
                 },
             )
 
@@ -173,8 +170,6 @@ class TwoFactorVerifyView(View):
                     "post_url": request.path,
                     "next_url": next_url,
                     "error": error_msg,
-                    "can_setup": True,
-                    "setup_url": f"{reverse('two_factor_setup')}?next={quote_plus(next_url)}",
                 },
             )
 
@@ -214,11 +209,31 @@ class TwoFactorSetupView(View):
         if not user:
             return redirect("/login")
 
+        # Security check: Pre-auth users who already have a confirmed 2FA device are strictly
+        # forbidden from accessing device setup/reconfiguration before completing full verification.
+        if not request.user.is_authenticated and user_has_device(user):
+            next_url = _get_safe_next_url(request)
+            return redirect(f"{reverse('two_factor_verify')}?next={quote_plus(next_url)}")
+
+        if request.user.is_authenticated and not getattr(request.user, "is_verified", lambda: False)():
+            next_url = _get_safe_next_url(request)
+            return redirect(f"{reverse('two_factor_verify')}?next={quote_plus(next_url)}")
+
         # Get or create an unconfirmed TOTPDevice for enrollment
         device = TOTPDevice.objects.filter(user=user, confirmed=False).order_by("-id").first()
         if not device:
             device = TOTPDevice.objects.create(user=user, name="default", confirmed=False)
 
+        # Get or create an unconfirmed StaticDevice with backup recovery tokens
+        static_device = StaticDevice.objects.filter(user=user, confirmed=False).order_by("-id").first()
+        if not static_device:
+            static_device = StaticDevice.objects.create(user=user, name="backup", confirmed=False)
+
+        if static_device.token_set.count() == 0:
+            for _idx in range(8):
+                static_device.token_set.create(token=StaticToken.random_token())
+
+        backup_tokens = list(static_device.token_set.values_list("token", flat=True))
         qr_code_data_uri = self._generate_qr_data_uri(device)
         secret_key = self._format_secret_key(device)
         next_url = _get_safe_next_url(request)
@@ -228,6 +243,7 @@ class TwoFactorSetupView(View):
             "next_url": next_url,
             "qr_code_data_uri": qr_code_data_uri,
             "secret_key": secret_key,
+            "backup_tokens": backup_tokens,
             "error": None,
         }
         return render_to_response("student_account/two_factor_setup.html", context)
@@ -242,6 +258,19 @@ class TwoFactorSetupView(View):
                 return JsonResponse({"error": _("Session expired. Please log in again."), "error_code": "session-expired"}, status=400)
             return redirect("/login")
 
+        # Security check: Pre-auth users who already have a confirmed device cannot create or overwrite devices.
+        if not request.user.is_authenticated and user_has_device(user):
+            if _is_json_request(request):
+                return JsonResponse({"error": _("Two-factor authentication is already configured."), "error_code": "already-configured"}, status=403)
+            next_url = _get_safe_next_url(request)
+            return redirect(f"{reverse('two_factor_verify')}?next={quote_plus(next_url)}")
+
+        if request.user.is_authenticated and not getattr(request.user, "is_verified", lambda: False)():
+            if _is_json_request(request):
+                return JsonResponse({"error": _("Two-factor verification required."), "error_code": "unverified"}, status=403)
+            next_url = _get_safe_next_url(request)
+            return redirect(f"{reverse('two_factor_verify')}?next={quote_plus(next_url)}")
+
         device = TOTPDevice.objects.filter(user=user, confirmed=False).order_by("-id").first()
         if not device:
             return redirect(request.path)
@@ -250,13 +279,25 @@ class TwoFactorSetupView(View):
         token = str(token).strip().replace(" ", "")
 
         if token and device.verify_token(token):
-            # Remove any previous confirmed TOTP devices to avoid device proliferation
+            # Remove any previous confirmed TOTP and Static devices to avoid device proliferation
             TOTPDevice.objects.filter(user=user, confirmed=True).delete()
+            StaticDevice.objects.filter(user=user, confirmed=True).delete()
+
             device.confirmed = True
             device.save()
 
-            # Clean up other pending unconfirmed devices
+            # Clean up other pending unconfirmed TOTP devices
             TOTPDevice.objects.filter(user=user, confirmed=False).exclude(id=device.id).delete()
+
+            # Confirm the static backup recovery device
+            static_device = StaticDevice.objects.filter(user=user, confirmed=False).order_by("-id").first()
+            if not static_device:
+                static_device = StaticDevice.objects.create(user=user, name="backup", confirmed=False)
+                for _idx in range(8):
+                    static_device.token_set.create(token=StaticToken.random_token())
+            static_device.confirmed = True
+            static_device.save()
+            StaticDevice.objects.filter(user=user, confirmed=False).exclude(id=static_device.id).delete()
 
             # Clear pre-auth state
             request.session.pop("otp_failed_attempts", None)
@@ -285,11 +326,15 @@ class TwoFactorSetupView(View):
             secret_key = self._format_secret_key(device)
             next_url = _get_safe_next_url(request)
 
+            static_device = StaticDevice.objects.filter(user=user, confirmed=False).order_by("-id").first()
+            backup_tokens = list(static_device.token_set.values_list("token", flat=True)) if static_device else []
+
             context = {
                 "post_url": request.path,
                 "next_url": next_url,
                 "qr_code_data_uri": qr_code_data_uri,
                 "secret_key": secret_key,
+                "backup_tokens": backup_tokens,
                 "error": error_msg,
             }
             return render_to_response("student_account/two_factor_setup.html", context)

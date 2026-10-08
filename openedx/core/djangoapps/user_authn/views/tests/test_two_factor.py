@@ -10,6 +10,7 @@ from django.contrib.auth.models import AnonymousUser, User
 from django.test import RequestFactory, TestCase
 from django.test.utils import override_settings
 from django.urls import reverse
+from django_otp import DEVICE_ID_SESSION_KEY
 from django_otp.plugins.otp_static.models import StaticDevice
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from edx_toggles.toggles.testutils import override_waffle_switch
@@ -71,7 +72,7 @@ class TwoFactorViewsTest(TestCase):
 
     @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
     def test_verify_get_renders_page_with_confirmed_device(self):
-        """If staff user has a confirmed device, GET /login/2fa/ renders verification page."""
+        """If staff user has a confirmed device, GET /login/2fa/ renders verification page without setup link."""
         TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=True)
 
         session = self.client.session
@@ -80,6 +81,59 @@ class TwoFactorViewsTest(TestCase):
 
         response = self.client.get(self.verify_url)
         self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Set up or reconfigure authenticator app")
+        self.assertNotContains(response, self.setup_url)
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_setup_get_redirects_to_verify_if_user_already_has_confirmed_device(self):
+        """Pre-auth staff user who already has an enrolled device cannot access setup GET."""
+        TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=True)
+
+        session = self.client.session
+        session["pre_auth_staff_user_id"] = self.staff_user.id
+        session["pre_auth_staff_next_url"] = "/admin"
+        session.save()
+
+        response = self.client.get(self.setup_url)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(self.verify_url))
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_setup_post_rejected_if_user_already_has_confirmed_device(self):
+        """Pre-auth staff user who already has an enrolled device cannot overwrite or enroll new device."""
+        existing_device = TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=True)
+        unconfirmed_device = TOTPDevice.objects.create(user=self.staff_user, name="new_device", confirmed=False)
+
+        session = self.client.session
+        session["pre_auth_staff_user_id"] = self.staff_user.id
+        session.save()
+
+        with patch.object(TOTPDevice, "verify_token", return_value=True):
+            response = self.client.post(
+                self.setup_url,
+                {"otp_token": "123456"},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+
+        self.assertEqual(response.status_code, 403)
+        existing_device.refresh_from_db()
+        self.assertTrue(existing_device.confirmed)
+        unconfirmed_device.refresh_from_db()
+        self.assertFalse(unconfirmed_device.confirmed)
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_setup_get_allowed_for_authenticated_verified_staff_user(self):
+        """Fully authenticated and OTP-verified staff member can access setup to reconfigure device."""
+        device = TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=True)
+        self.client.login(username=self.staff_user.username, password=self.password)
+
+        session = self.client.session
+        session[DEVICE_ID_SESSION_KEY] = device.persistent_id
+        session.save()
+
+        response = self.client.get(self.setup_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Save Backup Recovery Codes")
 
     @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
     def test_verify_post_valid_totp_token_success(self):
@@ -150,7 +204,7 @@ class TwoFactorViewsTest(TestCase):
 
     @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
     def test_setup_get_generates_qr_code_and_unconfirmed_device(self):
-        """GET /account/2fa/setup/ creates an unconfirmed TOTP device and provides QR data URI."""
+        """GET /account/2fa/setup/ creates an unconfirmed TOTP device, backup tokens, and provides QR data URI."""
         session = self.client.session
         session["pre_auth_staff_user_id"] = self.staff_user.id
         session.save()
@@ -161,10 +215,17 @@ class TwoFactorViewsTest(TestCase):
         device = TOTPDevice.objects.filter(user=self.staff_user, confirmed=False).first()
         self.assertIsNotNone(device)
 
+        static_device = StaticDevice.objects.filter(user=self.staff_user, confirmed=False).first()
+        self.assertIsNotNone(static_device)
+        self.assertEqual(static_device.token_set.count(), 8)
+        self.assertContains(response, "Save Backup Recovery Codes")
+
     @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
     def test_setup_post_confirmation_success(self):
-        """Submitting matching code activates the device, clears pre-auth, and logs user in."""
+        """Submitting matching code activates TOTP device, confirms backup static device, clears pre-auth, and logs user in."""
         device = TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=False)
+        static_device = StaticDevice.objects.create(user=self.staff_user, name="backup", confirmed=False)
+        static_device.token_set.create(token="recov123")
 
         session = self.client.session
         session["pre_auth_staff_user_id"] = self.staff_user.id
@@ -179,6 +240,8 @@ class TwoFactorViewsTest(TestCase):
 
         device.refresh_from_db()
         self.assertTrue(device.confirmed)
+        static_device.refresh_from_db()
+        self.assertTrue(static_device.confirmed)
         self.assertEqual(int(self.client.session["_auth_user_id"]), self.staff_user.id)
 
     @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
