@@ -326,6 +326,11 @@ def _handle_successful_authentication_and_login(user, request):
     _track_user_login(user, request)
 
     try:
+        if not getattr(user, "backend", None):
+            user.backend = (
+                request.session.get("pre_auth_staff_backend")
+                or settings.AUTHENTICATION_BACKENDS[0]
+            )
         django_login(request, user)
         request.session.set_expiry(604800 * 4)
         log.debug("Setting user session expiry to 4 weeks")
@@ -657,6 +662,9 @@ def login_user(request, api_version="v1"):  # pylint: disable=too-many-statement
         # Intercept staff user for Two-Factor Authentication (2FA)
         if possibly_authenticated_user.is_staff and is_staff_2fa_enabled():
             request.session["pre_auth_staff_user_id"] = possibly_authenticated_user.id
+            request.session["pre_auth_staff_backend"] = (
+                getattr(possibly_authenticated_user, "backend", None) or settings.AUTHENTICATION_BACKENDS[0]
+            )
             if redirect_url:
                 request.session["pre_auth_staff_next_url"] = redirect_url
 

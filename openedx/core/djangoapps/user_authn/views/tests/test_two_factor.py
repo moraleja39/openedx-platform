@@ -198,6 +198,106 @@ class TwoFactorViewsTest(TestCase):
         self.assertFalse(device.confirmed)
         self.assertNotIn("_auth_user_id", self.client.session)
 
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    @override_settings(AUTHENTICATION_BACKENDS=[
+        "django.contrib.auth.backends.ModelBackend",
+        "common.djangoapps.student.models.EmailAuthBackend",
+    ])
+    def test_setup_post_confirmation_success_with_multiple_backends(self):
+        """Device enrollment succeeds when multiple auth backends are configured and backend is in session."""
+        device = TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=False)
+
+        session = self.client.session
+        session["pre_auth_staff_user_id"] = self.staff_user.id
+        session["pre_auth_staff_backend"] = "common.djangoapps.student.models.EmailAuthBackend"
+        session["pre_auth_staff_next_url"] = "/admin"
+        session.save()
+
+        with patch.object(TOTPDevice, "verify_token", return_value=True):
+            response = self.client.post(self.setup_url, {"otp_token": "654321", "next": "/admin"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/admin")
+
+        device.refresh_from_db()
+        self.assertTrue(device.confirmed)
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.staff_user.id)
+        self.assertEqual(self.client.session["_auth_user_backend"], "common.djangoapps.student.models.EmailAuthBackend")
+        self.assertNotIn("pre_auth_staff_backend", self.client.session)
+        self.assertNotIn("pre_auth_staff_user_id", self.client.session)
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    @override_settings(AUTHENTICATION_BACKENDS=[
+        "django.contrib.auth.backends.ModelBackend",
+        "common.djangoapps.student.models.EmailAuthBackend",
+    ])
+    def test_setup_post_confirmation_success_with_fallback_backend(self):
+        """Device enrollment succeeds with fallback backend when pre_auth_staff_backend is absent."""
+        device = TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=False)
+
+        session = self.client.session
+        session["pre_auth_staff_user_id"] = self.staff_user.id
+        session["pre_auth_staff_next_url"] = "/admin"
+        session.save()
+
+        with patch.object(TOTPDevice, "verify_token", return_value=True):
+            response = self.client.post(self.setup_url, {"otp_token": "654321", "next": "/admin"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/admin")
+
+        device.refresh_from_db()
+        self.assertTrue(device.confirmed)
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.staff_user.id)
+        self.assertEqual(self.client.session["_auth_user_backend"], "django.contrib.auth.backends.ModelBackend")
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    @override_settings(AUTHENTICATION_BACKENDS=[
+        "django.contrib.auth.backends.ModelBackend",
+        "common.djangoapps.student.models.EmailAuthBackend",
+    ])
+    def test_verify_post_valid_totp_token_with_multiple_backends(self):
+        """Verification succeeds when multiple auth backends are configured and backend is restored."""
+        device = TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=True)
+
+        session = self.client.session
+        session["pre_auth_staff_user_id"] = self.staff_user.id
+        session["pre_auth_staff_backend"] = "common.djangoapps.student.models.EmailAuthBackend"
+        session["pre_auth_staff_next_url"] = "/admin"
+        session.save()
+
+        with patch.object(TOTPDevice, "verify_token", return_value=True):
+            response = self.client.post(self.verify_url, {"otp_token": "123456", "next": "/admin"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/admin")
+        self.assertNotIn("pre_auth_staff_backend", self.client.session)
+        self.assertNotIn("pre_auth_staff_user_id", self.client.session)
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.staff_user.id)
+        self.assertEqual(self.client.session["_auth_user_backend"], "common.djangoapps.student.models.EmailAuthBackend")
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    @override_settings(AUTHENTICATION_BACKENDS=[
+        "django.contrib.auth.backends.ModelBackend",
+        "common.djangoapps.student.models.EmailAuthBackend",
+    ])
+    def test_verify_post_valid_totp_token_with_fallback_backend(self):
+        """Verification succeeds with fallback backend when multiple backends are configured."""
+        device = TOTPDevice.objects.create(user=self.staff_user, name="default", confirmed=True)
+
+        session = self.client.session
+        session["pre_auth_staff_user_id"] = self.staff_user.id
+        session["pre_auth_staff_next_url"] = "/admin"
+        session.save()
+
+        with patch.object(TOTPDevice, "verify_token", return_value=True):
+            response = self.client.post(self.verify_url, {"otp_token": "123456", "next": "/admin"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/admin")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), self.staff_user.id)
+        self.assertEqual(self.client.session["_auth_user_backend"], "django.contrib.auth.backends.ModelBackend")
+
 
 class OTPAdminSiteTest(TestCase):
     """

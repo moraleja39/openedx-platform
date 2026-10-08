@@ -53,7 +53,13 @@ def _get_staff_user(request):
     user_id = request.session.get("pre_auth_staff_user_id")
     if user_id:
         try:
-            return User.objects.get(id=user_id, is_active=True, is_staff=True)
+            user = User.objects.get(id=user_id, is_active=True, is_staff=True)
+            user.backend = (
+                request.session.get("pre_auth_staff_backend")
+                or getattr(user, "backend", None)
+                or settings.AUTHENTICATION_BACKENDS[0]
+            )
+            return user
         except User.DoesNotExist:
             log.warning(f"Pre-auth staff user id {user_id} does not exist or is inactive.")
             return None
@@ -139,13 +145,13 @@ class TwoFactorVerifyView(View):
             # Clear pre-auth state & failures
             request.session.pop("otp_failed_attempts", None)
             request.session.pop("pre_auth_staff_user_id", None)
+            request.session.pop("pre_auth_staff_backend", None)
             next_url = _get_safe_next_url(request)
             request.session.pop("pre_auth_staff_next_url", None)
 
             # Establish authenticated and OTP session
-            django_login(request, user)
-            otp_login(request, device)
             _handle_successful_authentication_and_login(user, request)
+            otp_login(request, device)
 
             if _is_json_request(request):
                 response = JsonResponse({"success": True, "redirect_url": next_url})
@@ -255,13 +261,13 @@ class TwoFactorSetupView(View):
             # Clear pre-auth state
             request.session.pop("otp_failed_attempts", None)
             request.session.pop("pre_auth_staff_user_id", None)
+            request.session.pop("pre_auth_staff_backend", None)
             next_url = _get_safe_next_url(request)
             request.session.pop("pre_auth_staff_next_url", None)
 
             # Establish session & OTP verification
-            django_login(request, user)
-            otp_login(request, device)
             _handle_successful_authentication_and_login(user, request)
+            otp_login(request, device)
 
             if _is_json_request(request):
                 response = JsonResponse({"success": True, "redirect_url": next_url})

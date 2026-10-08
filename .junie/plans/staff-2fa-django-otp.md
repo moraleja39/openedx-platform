@@ -5,196 +5,126 @@ sessionId: session-261007-140636-sb4q
 # Requirements
 
 ### Overview & Goals
-The goal of this initiative is to implement Two-Factor Authentication (2FA / TOTP) into Open edX, enforced **exclusively for staff users** (`user.is_staff == True`), while keeping the login experience completely unchanged and frictionless for learners.
+The goal of this initiative is to ensure seamless Two-Factor Authentication (2FA / TOTP) in Open edX for staff users (`user.is_staff == True`), and specifically resolve the backend resolution issue encountered during 2FA enrollment (`ValueError: You have multiple authentication backends configured...`), while keeping the learner login pipeline completely unaffected.
 
 ### Feasibility & Complexity Assessment
-- **Overall Complexity**: **Low to Moderate** (Estimated ~2-3 engineer days to implement, test, and configure).
-- **Recommended Approach**: Leverage **`django-otp`** and its ecosystem (`django-otp-totp`, `django-otp-static`, `qrcode`).
-- **Why `django-otp`?**:
-  - It is the de-facto Django standard for two-factor authentication, robust, well-maintained, and lightweight.
-  - It integrates directly with Django's built-in authentication system and `django.contrib.admin`.
-  - It supports standard authenticator apps (Google Authenticator, Microsoft Authenticator, 1Password, Authy) using RFC 6238 TOTP.
-  - It avoids disrupting the Open edX learner login pipeline by gating the second factor purely on `user.is_staff`.
+- **Overall Complexity**: **Low** (Focused bug fix and defensive auth backend resolution).
+- **Recommended Approach**: Persist the resolved authentication backend string in the pre-auth session state upon initial credential authentication in `login_user`, and restore `user.backend` when loading the pre-auth staff user in `two_factor.py` and `_handle_successful_authentication_and_login`.
+- **Why this approach?**:
+  - Django's `login()` requires either a `backend` argument or a `user.backend` attribute whenever multiple authentication backends are listed in `settings.AUTHENTICATION_BACKENDS`.
+  - Storing the backend identifier during the pre-auth challenge preserves the authenticating provider (e.g. ModelBackend, RateLimitedBackend, SAML/SSO) through to final session creation after 2FA verification/setup.
 
 ### Scope
 - **In Scope**:
-  - Integration of `django-otp`, `django-otp-totp`, `django-otp-static`, and `qrcode` into Open edX dependencies and settings.
-  - Intercepting staff login in `openedx.core.djangoapps.user_authn.views.login` (`login_user` / `LoginSessionView`).
-  - Gating 2FA verification strictly for users where `user.is_staff` is `True`.
-  - Dedicated server-rendered views and templates for TOTP token verification (`/login/2fa/`) and TOTP device onboarding (`/account/2fa/setup/`).
-  - Protecting Django Admin (`/admin/`) in LMS and Studio (CMS) with `OTPAdminSite`.
-  - Waffle toggle (`user_authn.enable_staff_2fa`) for safe rollout and emergency bypass.
+  - Persisting `pre_auth_staff_backend` in session state during `login_user` staff 2FA interception.
+  - Ensuring `_get_staff_user` in `two_factor.py` assigns `user.backend` from session (with fallback to `settings.AUTHENTICATION_BACKENDS[0]`).
+  - Removing duplicate `django_login` calls in `TwoFactorVerifyView` and `TwoFactorSetupView` (leveraging `_handle_successful_authentication_and_login` followed by `otp_login`).
+  - Adding defensive fallback in `_handle_successful_authentication_and_login` so `user.backend` is guaranteed to be set.
+  - Adding multi-backend test coverage in `test_two_factor.py` to prevent regressions.
 - **Out of Scope**:
-  - 2FA enforcement for general learners (non-staff users).
-  - SMS/Hardware security key (WebAuthn/FIDO2) authentication in the initial phase (TOTP + static recovery tokens only).
-  - Rewriting frontend single-page app (MFE) login forms — simple server-side redirect flow for staff avoids needing MFE changes.
+  - Changing learner authentication flows or frontend MFE login logic.
+  - Modifying OTP device verification algorithms or `django-otp` internals.
 
 ### User Stories
-- **As a System Administrator**, I want all staff accounts to require 2FA so that administrative access to LMS and CMS is protected against credential theft and unauthorized access.
-- **As a Staff Member**, I want to easily register my TOTP authenticator app and enter a 6-digit code upon login so that I can securely access staff tools and Django admin.
-- **As a Learner**, I want to log in using my regular username/password (or SSO) without any extra 2FA prompts so that my user experience is completely unaffected.
+- **As a Staff User**, I want to enroll my 2FA authenticator device and verify my TOTP code without encountering backend configuration exceptions, so that I can complete login smoothly.
+- **As a System Administrator**, I want 2FA session creation to work reliably in environments with multiple authentication backends (SSO, OAuth, email/password).
 
 # Technical Design
 
-### Current Implementation
-- **Authentication Endpoint**: `openedx.core.djangoapps.user_authn.views.login.login_user` (and `LoginSessionView` at `/user/v1/account/login_session/`) authenticates users using `django.contrib.auth.authenticate` and logs them in via `django.contrib.auth.login` (`_handle_successful_authentication_and_login`).
-- **Django Admin**: `lms/urls.py` and `cms/urls.py` mount `admin.site.urls` and currently redirect `/admin/login/` to LMS login via `redirect_to_lms_login`.
-- **Filters**: Open edX supports `StudentLoginRequested` filter pipeline step during login processing in `login.py`.
+### Current Implementation & Root Cause
+- **Root Cause**: During staff login in `login_user` (`openedx/core/djangoapps/user_authn/views/login.py`), the staff user is intercepted for 2FA, saving only `pre_auth_staff_user_id` to the session.
+- When the user visits `/account/2fa/setup/` or `/login/2fa/` (`openedx/core/djangoapps/user_authn/views/two_factor.py`), `_get_staff_user(request)` loads a fresh `User` model instance via `User.objects.get(id=user_id)`.
+- Because this instance is fetched directly from the database rather than `authenticate()`, `user.backend` is not set.
+- When `django_login(request, user)` or `_handle_successful_authentication_and_login(user, request)` runs, Django detects multiple `AUTHENTICATION_BACKENDS` (e.g. `RateLimitedBackend`, `ModelBackend`, `GoogleOAuth2`, `SAMLAuthBackend`) and raises `ValueError: You have multiple authentication backends configured and therefore must provide the backend argument or set the backend attribute on the user.`
 
 ### Key Decisions
-1. **Extension Selection (`django-otp`)**:
-   - *Decision*: Use `django-otp` with `django_otp.plugins.otp_totp` and `django_otp.plugins.otp_static`.
-   - *Rationale*: Minimal footprint, native Django compatibility, built-in Django admin support (`OTPAdminSite`), and zero database modifications needed for non-staff learners.
-2. **Staff-Only Interception**:
-   - *Decision*: Check `user.is_staff` after password authentication in `login_user`.
-   - *Rationale*: Non-staff learners immediately complete login with standard session cookies without ever triggering 2FA. Staff users receive a 2FA challenge redirect.
-3. **Dedicated 2FA Verification & Setup Endpoints**:
-   - *Decision*: Implement standard Django server-rendered views (`/login/2fa/` and `/account/2fa/setup/`) for staff verification and QR code setup.
-   - *Rationale*: Keeps frontend complexity to a minimum, works across LMS and Studio, and requires zero changes to learner-facing JavaScript bundles (`AccessView.js`, `LoginView.js`).
-4. **Build & Test Workflow Optimization**:
-   - *Decision*: Bypass intermediate per-step package reinstallation and container test runs during active code development.
-   - *Rationale*: Container image building and deployment are handled externally by Tutor. Deferring full image builds and test runs until the core implementation is mostly finished maximizes development throughput and eliminates redundant overhead.
-
-### Architecture Diagram
-```mermaid
-graph TD
-    A[User Enters Credentials] --> B[POST /user/v1/account/login_session/]
-    B --> C{authenticate password}
-    C -- Invalid --> D[Return 400 Bad Request]
-    C -- Valid --> E{user.is_staff?}
-    E -- No (Learner) --> F[Complete django_login & Set Cookies]
-    F --> G[Redirect to /dashboard or next_url]
-    E -- Yes (Staff) --> H{TOTP Device Enrolled?}
-    H -- No --> I[Redirect to /account/2fa/setup/ with QR Code]
-    I --> J[Staff Scans QR & Confirms TOTP]
-    H -- Yes --> K[Redirect to /login/2fa/]
-    J --> K
-    K --> L[POST 6-Digit TOTP Token]
-    L --> M{django_otp.match_token}
-    M -- Valid --> N[Complete django_login & Set Cookies]
-    N --> O[Redirect to /admin or next_url]
-    M -- Invalid --> P[Show Error & Prompt Again]
-```
+1. **Pre-Auth Backend Preservation**:
+   - *Decision*: Store `request.session['pre_auth_staff_backend'] = getattr(possibly_authenticated_user, 'backend', None) or settings.AUTHENTICATION_BACKENDS[0]` during staff interception in `login_user`.
+   - *Rationale*: Guarantees that the exact backend that validated the user's password/credentials is retained across redirects.
+2. **Defensive Backend Restoration in `_get_staff_user` & `_handle_successful_authentication_and_login`**:
+   - *Decision*: Assign `user.backend = request.session.get('pre_auth_staff_backend') or getattr(user, 'backend', None) or settings.AUTHENTICATION_BACKENDS[0]` whenever loading the pre-auth user and prior to `django_login`.
+   - *Rationale*: Eliminates any risk of `ValueError` regardless of entry point or session state.
+3. **Streamlined Auth Handler Execution**:
+   - *Decision*: In `TwoFactorVerifyView.post` and `TwoFactorSetupView.post`, invoke `_handle_successful_authentication_and_login(user, request)` to perform session creation, tracking, and cookie setup, followed by `otp_login(request, device)` to record OTP verification.
+   - *Rationale*: Prevents duplicate `django_login(request, user)` calls and ensures consistent event tracking and session timeouts.
 
 ### Proposed Changes
 
-#### 1. Configuration & Dependencies
-- `requirements/edx/base.in`: Add `django-otp`, `django-otp-totp`, `django-otp-static`, and `qrcode`.
-- `lms/envs/common.py` and `cms/envs/common.py`:
-  - Add to `INSTALLED_APPS`:
-    - `'django_otp'`
-    - `'django_otp.plugins.otp_totp'`
-    - `'django_otp.plugins.otp_static'`
-  - Add to `MIDDLEWARE` (after `AuthenticationMiddleware`):
-    - `'django_otp.middleware.OTPMiddleware'`
+#### 1. Auth Flow Interception (`openedx/core/djangoapps/user_authn/views/login.py`)
+- In `login_user`:
+  ```python
+  if possibly_authenticated_user.is_staff and is_staff_2fa_enabled():
+      request.session["pre_auth_staff_user_id"] = possibly_authenticated_user.id
+      request.session["pre_auth_staff_backend"] = (
+          getattr(possibly_authenticated_user, "backend", None) or settings.AUTHENTICATION_BACKENDS[0]
+      )
+      if redirect_url:
+          request.session["pre_auth_staff_next_url"] = redirect_url
+      # Return 2FA redirect
+  ```
+- In `_handle_successful_authentication_and_login(user, request)`:
+  ```python
+  if not getattr(user, "backend", None):
+      user.backend = settings.AUTHENTICATION_BACKENDS[0]
+  django_login(request, user)
+  ```
 
-#### 2. Auth Flow Interception
-- `openedx/core/djangoapps/user_authn/views/login.py`:
-  - In `login_user`:
-    ```python
-    if possibly_authenticated_user.is_staff and is_staff_2fa_enabled():
-        device = default_device(possibly_authenticated_user)
-        # Store pre-auth user ID and target redirect in signed session
-        request.session['pre_auth_staff_user_id'] = possibly_authenticated_user.id
-        request.session['pre_auth_staff_next_url'] = redirect_url or next_url
-        target_2fa_url = reverse('two_factor_verify') if device else reverse('two_factor_setup')
-        return JsonResponse({'success': True, 'redirect_url': target_2fa_url})
-    ```
-
-#### 3. 2FA Views & Templates
-- `openedx/core/djangoapps/user_authn/views/two_factor.py`:
-  - `TwoFactorVerifyView`: Validates TOTP / backup tokens, logs the staff user in using `django_login` and `django_otp.login(request, device)`, sets JWT cookies, and redirects to `next_url`.
-  - `TwoFactorSetupView`: Generates a `TOTPDevice`, renders the `otpauth://` QR code via `qrcode`, and activates the device once the user submits a matching confirmation code.
-- `lms/templates/student_account/two_factor_verify.html`: Clean, accessible form for 6-digit TOTP token input with link for backup static tokens.
-- `lms/templates/student_account/two_factor_setup.html`: QR code display and setup instructions for Google Authenticator / 1Password / Authy.
-
-#### 4. Django Admin Protection
-- `lms/urls.py` and `cms/urls.py`:
-  - Enable `OTPAdminSite` (`django_otp.admin.OTPAdminSite`) for `/admin/` routes to ensure administrative access requires active OTP verification.
+#### 2. 2FA Views (`openedx/core/djangoapps/user_authn/views/two_factor.py`)
+- Update `_get_staff_user(request)`:
+  ```python
+  user_id = request.session.get("pre_auth_staff_user_id")
+  if user_id:
+      try:
+          user = User.objects.get(id=user_id, is_active=True, is_staff=True)
+          user.backend = (
+              request.session.get("pre_auth_staff_backend")
+              or getattr(user, "backend", None)
+              or settings.AUTHENTICATION_BACKENDS[0]
+          )
+          return user
+      except User.DoesNotExist:
+          log.warning(f"Pre-auth staff user id {user_id} does not exist or is inactive.")
+          return None
+  ```
+- In `TwoFactorVerifyView.post` and `TwoFactorSetupView.post`:
+  - Pop `pre_auth_staff_backend` from session upon successful verification.
+  - Call `_handle_successful_authentication_and_login(user, request)` followed by `otp_login(request, device)`.
 
 ### File Structure
 - **Modified**:
-  - `requirements/edx/base.in`
-  - `lms/envs/common.py`
-  - `cms/envs/common.py`
   - `openedx/core/djangoapps/user_authn/views/login.py`
-  - `lms/urls.py`
-  - `cms/urls.py`
-- **Added**:
   - `openedx/core/djangoapps/user_authn/views/two_factor.py`
   - `openedx/core/djangoapps/user_authn/views/tests/test_two_factor.py`
-  - `lms/templates/student_account/two_factor_verify.html`
-  - `lms/templates/student_account/two_factor_setup.html`
 
 # Testing
 
 ### Validation Approach
-Verification focuses on two primary criteria:
-1. **Staff Security**: Staff users must strictly pass 2FA verification before gaining authenticated staff sessions or Django admin access.
-2. **Learner Non-Regression**: Regular learners must experience zero changes, prompts, or performance degradation during login.
-
-*Note*: Comprehensive validation and container environment builds are deferred to the final verification phase (Step 5) since Docker images are built externally via Tutor. Intermediate stages focus strictly on delivering complete, high-quality code changes.
+- Verify that both 2FA setup (`/account/2fa/setup/`) and 2FA verification (`/login/2fa/`) succeed seamlessly when multiple `AUTHENTICATION_BACKENDS` are configured in settings.
+- Verify that pre-auth session attributes are cleanly cleared after successful device confirmation.
 
 ### Key Scenarios
-- **Staff User with Configured 2FA**:
-  - Submit valid username and password.
-  - Verify redirection to `/login/2fa/`.
-  - Submit valid 6-digit TOTP code.
-  - Verify session creation, JWT cookies, `user.is_authenticated`, `user.is_verified()`, and successful redirection to `/admin` or dashboard.
-- **Staff User First-Time Login (No 2FA Configured)**:
-  - Submit valid credentials.
-  - Verify redirection to `/account/2fa/setup/`.
-  - Scan QR code and confirm with initial 6-digit code.
-  - Verify device registration and successful session initialization.
-- **Non-Staff Learner Login**:
-  - Submit credentials for a non-staff user (`is_staff == False`).
-  - Verify immediate 200 OK response with `redirect_url` and no 2FA challenge.
-- **Django Admin Access**:
-  - Access `/admin/` with an unverified staff session and verify OTP enforcement via `OTPAdminSite` / `OTPMiddleware`.
-
-### Edge Cases
-- **Invalid OTP Codes**: Entering wrong or expired TOTP codes shows clear error messages without terminating pre-auth session prematurely.
-- **Rate Limiting**: Repeated invalid OTP attempts trigger rate-limiting to prevent brute-forcing 6-digit tokens.
-- **Static Backup Tokens**: Staff user can use a one-time emergency backup token if their TOTP device is lost or inaccessible.
-- **Third-Party Auth (SSO) for Staff**: Staff users authenticating via SSO (SAML/OAuth) are routed through the same 2FA verification step before session activation if staff 2FA is enabled.
+- **2FA Device Enrollment with Multiple Backends**:
+  - Configure `AUTHENTICATION_BACKENDS` with multiple backend classes (e.g. `ModelBackend`, `EmailAuthBackend`).
+  - POST valid OTP confirmation code to `/account/2fa/setup/`.
+  - Verify device confirmation, session establishment without `ValueError`, and successful redirection.
+- **2FA Verification with Multiple Backends**:
+  - POST valid OTP token to `/login/2fa/`.
+  - Verify `django_login` succeeds and `user.is_authenticated` and `user.is_verified()` are both True.
+- **Learner Non-Regression**:
+  - Verify regular user logins complete normally without 2FA interception.
 
 # Delivery Steps
 
-### ✓ Step 1: Add django-otp dependencies and configure platform settings
-The platform has `django-otp` dependencies installed and configured in settings.
+### ✓ Step 1: Persist and restore authentication backend across 2FA flow
+Fix the `ValueError` by preserving `user.backend` in pre-auth session and restoring it during 2FA setup/verification.
 
-- Add `django-otp`, `django-otp-totp`, `django-otp-static`, and `qrcode` to `requirements/edx/base.in` and recompile requirements.
-- Add `django_otp`, `django_otp.plugins.otp_totp`, and `django_otp.plugins.otp_static` to `INSTALLED_APPS` in `lms/envs/common.py` and `cms/envs/common.py`.
-- Add `django_otp.middleware.OTPMiddleware` to `MIDDLEWARE` in `lms/envs/common.py` and `cms/envs/common.py` after `AuthenticationMiddleware`.
-- Add waffle switches and configuration flags (e.g., `ENABLE_STAFF_2FA`, `ENFORCE_STAFF_2FA_SETUP`) to control rollout safely.
+- Update `login_user` in `openedx/core/djangoapps/user_authn/views/login.py` to store `pre_auth_staff_backend`.
+- Add backend fallback in `_handle_successful_authentication_and_login` in `login.py` to ensure `user.backend` is always defined before calling `django_login`.
+- Update `_get_staff_user` in `openedx/core/djangoapps/user_authn/views/two_factor.py` to restore `user.backend` from session.
+- Streamline `TwoFactorVerifyView.post` and `TwoFactorSetupView.post` to execute `_handle_successful_authentication_and_login` followed by `otp_login`, clearing `pre_auth_staff_backend`.
 
-### ✓ Step 2: Implement staff 2FA verification and device enrollment endpoints
-Staff users have views and templates to verify TOTP tokens and enroll new TOTP devices with QR codes.
+### ✓ Step 2: Add test coverage for multi-backend 2FA setup and verification
+Add automated unit and regression tests verifying 2FA enrollment and verification under multiple authentication backends.
 
-- Implement `TwoFactorVerifyView` in `openedx/core/djangoapps/user_authn/views/two_factor.py` to validate submitted TOTP tokens using `django_otp.match_token`.
-- Implement `TwoFactorSetupView` in `openedx/core/djangoapps/user_authn/views/two_factor.py` to generate TOTP secret keys and render QR codes for authenticator apps (Google Authenticator, Authy, etc.).
-- Create Mako/HTML templates in `lms/templates/student_account/` for 2FA verification (`two_factor_verify.html`) and device setup (`two_factor_setup.html`).
-- Register URL routes in `openedx/core/djangoapps/user_authn/urls.py` and `lms/urls.py` (`/login/2fa/` and `/account/2fa/setup/`).
-
-### ✓ Step 3: Integrate staff 2FA interception into the user authentication flow
-Staff users logging in via the primary auth flow are redirected to 2FA verification, while non-staff learners experience no changes.
-
-- Update `login_user` in `openedx/core/djangoapps/user_authn/views/login.py` (or implement a `StudentLoginRequested` filter pipeline step) to check `user.is_staff`.
-- If `user.is_staff` is False, proceed with normal single-step authentication and session initialization.
-- If `user.is_staff` is True, withhold immediate session creation, stash partial authentication state in session/signed cookie, and return a 2FA redirect (`redirect_url='/login/2fa/'`).
-- Handle first-time staff login: if a staff member has no TOTP device registered, redirect to `/account/2fa/setup/`.
-- Once 2FA is verified in `TwoFactorVerifyView`, invoke `_handle_successful_authentication_and_login`, issue JWT cookies, and redirect to the staff member's original destination (`next` parameter).
-
-### ✓ Step 4: Secure Django Admin endpoints with OTP protection in LMS and CMS
-Django Admin sites in both LMS and CMS enforce OTP authentication for staff administrative access.
-
-- Configure `OTPAdminSite` in `lms/urls.py` and `cms/urls.py` or wrap `admin.site` with OTP protection.
-- Ensure admin URL routing (`/admin/login/` and `/admin/`) seamlessly validates 2FA for staff entering the Django administrative dashboard.
-- Update LMS and CMS admin login redirects to maintain consistency with the staff 2FA challenge flow.
-
-### ✓ Step 5: Add comprehensive tests and validation for staff 2FA and learner auth flows
-Unit and integration tests verify staff 2FA enforcement, enrollment, and regression-free learner login.
-
-- Add unit and integration tests in `openedx/core/djangoapps/user_authn/views/tests/test_two_factor.py` testing successful TOTP validation, invalid OTP codes, rate-limiting, and backup token usage.
-- Add test cases in `openedx/core/djangoapps/user_authn/views/tests/test_login.py` ensuring non-staff users log in without 2FA interception.
-- Verify Django Admin login enforcement and session persistence under `OTPMiddleware`.
+- Add test cases in `openedx/core/djangoapps/user_authn/views/tests/test_two_factor.py` with `@override_settings(AUTHENTICATION_BACKENDS=[...])` testing both `TwoFactorSetupView` and `TwoFactorVerifyView`.
+- Verify clean session cleanup and non-regression of learner login flows.

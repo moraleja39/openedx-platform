@@ -101,6 +101,7 @@ class LoginTest(OpenEdxEventsTestMixin, SiteMixin, CacheIsolationTestCase):
         self.assertTrue(data.get("redirect_url").startswith(reverse("two_factor_verify")))
         # User session is pre-auth, not fully logged in yet
         self.assertEqual(self.client.session.get("pre_auth_staff_user_id"), self.user.id)
+        self.assertTrue(self.client.session.get("pre_auth_staff_backend"))
         self.assertNotIn("_auth_user_id", self.client.session)
 
     @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
@@ -115,6 +116,7 @@ class LoginTest(OpenEdxEventsTestMixin, SiteMixin, CacheIsolationTestCase):
         self.assertTrue(data.get("success"))
         self.assertTrue(data.get("redirect_url").startswith(reverse("two_factor_setup")))
         self.assertEqual(self.client.session.get("pre_auth_staff_user_id"), self.user.id)
+        self.assertTrue(self.client.session.get("pre_auth_staff_backend"))
         self.assertNotIn("_auth_user_id", self.client.session)
 
     @override_waffle_switch(ENABLE_STAFF_2FA, active=False)
