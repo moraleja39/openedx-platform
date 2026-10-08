@@ -5,10 +5,12 @@ Public views
 from urllib.parse import quote_plus
 
 from django.conf import settings
+from django.contrib import admin
 from django.http.response import Http404
 from django.shortcuts import redirect
 
 from common.djangoapps.edxmako.shortcuts import render_to_response
+from openedx.core.djangoapps.user_authn.toggles import is_staff_2fa_enabled
 
 from ..config.waffle import ENABLE_ACCESSIBILITY_POLICY_PAGE
 from ..toggles import use_legacy_logged_out_home
@@ -45,8 +47,11 @@ def login_redirect_to_lms(request):
 
 def redirect_to_lms_login_for_admin(request):
     """
-    This view redirect the admin/login url to the site's login page.
+    This view redirects the admin/login url to the site's login page if
+    staff 2FA is disabled, or delegates to the patched admin login view when enabled.
     """
+    if is_staff_2fa_enabled():
+        return admin.site.login(request)
     return redirect('/login?next=/admin')
 
 

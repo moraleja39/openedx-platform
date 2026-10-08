@@ -369,11 +369,39 @@ class OTPAdminSiteTest(TestCase):
 
     def setUp(self):
         super().setUp()
+        patch_admin_site_with_otp()
         self.admin_site = OTPAdminSite(name="test_otp_admin")
         self.factory = RequestFactory()
 
+        self.password = "staffpassword123"
         self.staff_user = UserFactory.create(username="staff", is_staff=True, is_active=True)
+        self.staff_user.set_password(self.password)
+        self.staff_user.save()
+
         self.learner_user = UserFactory.create(username="learner", is_staff=False, is_active=True)
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_admin_login_renders_otp_form_when_staff_2fa_enabled(self):
+        """When 2FA is enabled, /admin/login/ serves the patched admin login form with OTP fields."""
+        response = self.client.get("/admin/login/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "otp_token")
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=False)
+    @override_settings(ENABLE_STAFF_2FA=False)
+    def test_admin_login_redirects_to_lms_login_when_staff_2fa_disabled(self):
+        """When 2FA is disabled, /admin/login/ redirects towards LMS login."""
+        response = self.client.get("/admin/login/")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/login?next=/admin")
+
+    @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
+    def test_admin_access_unverified_renders_login_form_without_loop(self):
+        """Accessing /admin/ without a verified TOTP device does not result in a redirection loop."""
+        self.client.login(username=self.staff_user.username, password=self.password)
+        response = self.client.get("/admin/", follow=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "otp_token")
 
     @override_waffle_switch(ENABLE_STAFF_2FA, active=True)
     def test_admin_permission_denied_for_unverified_staff_when_2fa_enabled(self):

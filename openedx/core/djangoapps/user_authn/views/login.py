@@ -12,6 +12,7 @@ import urllib
 from urllib.parse import quote_plus
 
 from django.conf import settings
+from django.contrib import admin
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth import login as django_login
 from django.contrib.auth.decorators import login_required
@@ -750,9 +751,11 @@ def login_refresh(request):  # lint-amnesty, pylint: disable=missing-function-do
 
 def redirect_to_lms_login(request):
     """
-    This view redirect the admin/login url to the site's login page if
-    waffle switch is on otherwise returns the admin site's login view.
+    This view redirects the admin/login url to the site's login page if
+    staff 2FA is disabled, or delegates to the patched admin login view when enabled.
     """
+    if is_staff_2fa_enabled():
+        return admin.site.login(request)
     return redirect("/login?next=/admin")
 
 
