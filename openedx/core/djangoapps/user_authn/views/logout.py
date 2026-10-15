@@ -29,7 +29,7 @@ class LogoutView(TemplateView):
     template_name = 'logout.html'
 
     # Keep track of the page to which the user should ultimately be redirected.
-    default_target = '/'
+    default_target = getattr(settings, 'LOGOUT_REDIRECT_URL', '/')
     tpa_logout_url = ''
 
     def post(self, request, *args, **kwargs):
